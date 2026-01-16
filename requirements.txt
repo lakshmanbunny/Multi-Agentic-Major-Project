@@ -1,0 +1,36 @@
+# Python Backend Dependencies
+# Auto-DataScientist System
+
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-dotenv==1.0.0
+
+# LangChain & AI
+langchain==0.1.0
+langchain-core==0.1.10
+langchain-google-genai==1.0.1
+langchain-community==0.0.13
+langgraph==0.0.20
+
+# Web & HTTP
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Browser Automation
+playwright==1.40.0
+
+# Data Processing & ML
+pandas==2.1.4
+numpy==1.24.4
+scikit-learn==1.3.2
+matplotlib==3.8.2
+seaborn==0.13.0
+xgboost==2.0.3
+
+# Search APIs
+tavily-python==0.3.0
+
+# Utilities
+python-multipart==0.0.6

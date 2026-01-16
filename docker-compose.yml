@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: infra/docker/orchestrator.Dockerfile
+    container_name: auto-ds-orchestrator
+    ports:
+      - "8000:8000"
+    environment:
+      - BROWSER_AGENT_URL=http://browser_agent:8001
+      - ML_WORKER_URL=http://ml_worker:8002
+    env_file:
+      - .env
+    volumes:
+      - ./services/orchestrator:/app/services/orchestrator
+    depends_on:
+      - browser_agent
+      - ml_worker
+    restart: unless-stopped
+
+  browser_agent:
+    build:
+      context: .
+      dockerfile: infra/docker/browser_agent.Dockerfile
+    container_name: auto-ds-browser-agent
+    ports:
+      - "8001:8001"
+    environment:
+      - HEADLESS=true
+    env_file:
+      - .env
+    volumes:
+      - ./services/browser_agent:/app/services/browser_agent
+    restart: unless-stopped
+
+  ml_worker:
+    build:
+      context: .
+      dockerfile: infra/docker/ml_worker.Dockerfile
+    container_name: auto-ds-ml-worker
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    volumes:
+      - ./services/ml_worker:/app/services/ml_worker
+      - ./data:/app/data
+    restart: unless-stopped
+
+networks:
+  default:
+    name: auto-data-scientist-network

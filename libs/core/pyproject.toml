@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "auto-data-scientist-core"
+version = "0.1.0"
+description = "Shared core library for Auto-DataScientist"
+authors = ["Your Name <your.email@example.com>"]
+packages = [{include = "core", from = "."}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pydantic = "^2.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
