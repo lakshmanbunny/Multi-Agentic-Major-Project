@@ -18,6 +18,19 @@ class CodeContext(TypedDict):
     model_code: str
     file_name: str
 
+class ResearchPaper(TypedDict):
+    title: str
+    url: str
+    summary: str
+    source: str  # e.g. "arxiv", "web"
+
+class ResearchData(TypedDict):
+    queries: List[str]
+    dataset_name: str
+    dataset_url: str
+    source_type: str  # "kaggle" or "direct"
+    papers: List[ResearchPaper]
+
 class AgentState(TypedDict):
     messages: List[Dict[str, str]]
     user_goal: str
@@ -28,4 +41,5 @@ class AgentState(TypedDict):
     human_approval: ApprovalStatus
     next_step: str
     rejected_urls: List[str]  # Track rejected dataset URLs for retry exclusion
+    research_data: ResearchData  # Research Assistant findings
 

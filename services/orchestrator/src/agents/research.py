@@ -20,6 +20,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_community.utilities import ArxivAPIWrapper
 from langchain_core.messages import SystemMessage, HumanMessage
+import requests
+import json
 
 from libs.core.state import AgentState
 from libs.core.logger import setup_logger
@@ -29,6 +31,38 @@ load_dotenv()
 
 # Initialize logger
 logger = setup_logger("research_agent", level="INFO")
+
+
+def search_serper(query: str, num_results: int = 5) -> dict:
+    """
+    Search using Serper.dev Google Search API.
+    
+    Args:
+        query: Search query string
+        num_results: Number of results to return
+    
+    Returns:
+        dict: Search results with 'organic' results list
+    """
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        logger.warning("SERPER_API_KEY not found, falling back to Tavily")
+        return None
+    
+    url = "https://google.serper.dev/search"
+    payload = json.dumps({"q": query, "num": num_results})
+    headers = {
+        'X-API-KEY': api_key,
+        'Content-Type': 'application/json'
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, data=payload, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.error(f"Serper API error: {e}")
+        return None
 
 
 def research_node(state: AgentState) -> AgentState:
@@ -68,6 +102,15 @@ def research_node(state: AgentState) -> AgentState:
     # -----------------------------------------------
 
     logger.info(f"🔍 Research Agent started for goal: {user_goal}")
+    
+    # Initialize research_data structure
+    research_data = {
+        "queries": [],
+        "dataset_name": "",
+        "dataset_url": "",
+        "source_type": "",
+        "papers": []
+    }
     
     try:
         # Initialize LLM
@@ -112,12 +155,47 @@ ALGORITHM_QUERY: <your algorithm query>"""
             elif line.startswith("ALGORITHM_QUERY:"):
                 algorithm_query = line.replace("ALGORITHM_QUERY:", "").strip()
         
+        # Capture queries
+        if dataset_query:
+            research_data["queries"].append(dataset_query)
+        if algorithm_query:
+            research_data["queries"].append(algorithm_query)
+        
         logger.info(f"Dataset query: {dataset_query}")
         logger.info(f"Algorithm query: {algorithm_query}")
         
-        # Step 2: Search for datasets using Tavily - GET TOP 3 and EXCLUDE REJECTED
+        # Step 2: Search for datasets - TRY SERPER FIRST, then Tavily fallback
         dataset_url = ""
         dataset_sources = []
+        
+        # Try Serper API first
+        serper_available = os.getenv("SERPER_API_KEY") is not None
+        if serper_available and dataset_query:
+            logger.info("Using Serper API for dataset search...")
+            dataset_search_query = f"{user_goal} dataset site:kaggle.com OR site:huggingface.co OR site:paperswithcode.com"
+            serper_results = search_serper(dataset_search_query, num_results=5)
+            
+            if serper_results and 'organic' in serper_results:
+                for result in serper_results['organic']:
+                    url = result.get('link', '')
+                    title = result.get('title', '')
+                    snippet = result.get('snippet', '')
+                    
+                    # Filter valid dataset sources
+                    if any(domain in url for domain in ['kaggle.com', 'huggingface.co', 'paperswithcode.com']):
+                        if url not in rejected_urls:
+                            dataset_sources.append({
+                                'url': url,
+                                'title': title,
+                                'snippet': snippet
+                            })
+                
+                if dataset_sources:
+                    dataset_url = dataset_sources[0]['url']
+                    logger.info(f"✅ Found dataset URL via Serper: {dataset_url}")
+                    logger.info(f"   Total alternatives available: {len(dataset_sources)}")
+        
+        # Fallback to Tavily if Serper didn't work
         
         try:
             tavily_search = TavilySearchResults(
@@ -151,35 +229,89 @@ ALGORITHM_QUERY: <your algorithm query>"""
                     # Use the first NON-REJECTED result
                     if dataset_sources:
                         dataset_url = dataset_sources[0]['url']
+                        
+                        # Capture dataset info
+                        research_data["dataset_url"] = dataset_url
+                        if 'kaggle.com' in dataset_url:
+                            research_data["source_type"] = "kaggle"
+                            # Extract Kaggle handle (e.g., username/dataset-name)
+                            parts = dataset_url.split('/')[-2:]
+                            if len(parts) == 2:
+                                research_data["dataset_name"] = f"{parts[0]}/{parts[1]}"
+                            else:
+                                research_data["dataset_name"] = dataset_url.split('/')[-1]
+                        else:
+                            research_data["source_type"] = "direct"
+                            research_data["dataset_name"] = dataset_url.split('/')[-1] or "Unknown Dataset"
+                        
                         logger.info(f"✅ Found dataset URL: {dataset_url}")
                         logger.info(f"   Total alternatives available: {len(dataset_sources) - 1}")
                     else:
                         logger.warning("⚠️ All search results were previously rejected!")
-        
         except Exception as e:
             logger.error(f"Tavily search failed: {str(e)}")
             dataset_sources = []
         
-        # Step 3: Search for research papers using Arxiv
-        papers = []
+        # Step 3: Find research papers - USE SERPER FOR BETTER RESULTS
+        papers_text = "No relevant papers found."
         
-        try:
-            if algorithm_query:
+        if serper_available:
+            logger.info("Using Serper API for research papers...")
+            papers_search_query = f"{user_goal} research paper pdf"
+            papers_serper_results = search_serper(papers_search_query, num_results=5)
+            
+            if papers_serper_results and 'organic' in papers_serper_results:
+                logger.info(f"✅ Found {len(papers_serper_results['organic'])} paper result(s)")
+                
+                for result in papers_serper_results['organic']:
+                    paper_url = result.get('link', '')
+                    paper_title = result.get('title', '')
+                    paper_snippet = result.get('snippet', '')
+                    
+                    # Detect source type
+                    source = 'web'
+                    if 'arxiv.org' in paper_url:
+                        source = 'arxiv'
+                    elif '.pdf' in paper_url.lower():
+                        source = 'pdf'
+                    
+                    # Only add papers with valid URLs (not generic homepages)
+                    if paper_url and paper_url != 'https://arxiv.org' and len(paper_url) > 20:
+                        research_data["papers"].append({
+                            "title": paper_title or f"Research on {user_goal}",
+                            "url": paper_url,
+                            "summary": paper_snippet or "No summary available",
+                            "source": source
+                        })
+        
+        # Fallback to Arxiv if Serper didn't find papers or wasn't available
+        if not research_data["papers"]: # Only use Arxiv if Serper didn't yield results
+            try:
+                arxiv = ArxivAPIWrapper(top_k_results=1)
                 logger.info("Searching Arxiv for research papers...")
-                arxiv = ArxivAPIWrapper(top_k_results=3)
-                arxiv_results = arxiv.run(algorithm_query)
+                
+                # Use algorithm query or user goal
+                query = algorithm_query if algorithm_query else user_goal
+                arxiv_results = arxiv.run(query)
                 
                 if arxiv_results:
-                    papers_text = arxiv_results[:500]  # Truncate for brevity
-                    papers.append({
-                        'summary': papers_text,
-                        'source': 'arxiv'
+                    papers_text = arxiv_results[:500]  # Truncate for display
+                    research_data["papers"].append({
+                        "title": f"Research papers on {user_goal}",
+                        "url": "https://arxiv.org",
+                        "summary": papers_text,
+                        "source": "arxiv"
                     })
-                    logger.info(f"✅ Found {len(papers)} research paper(s)")
+                    logger.info(f"✅ Found 1 research paper(s) via Arxiv fallback")
+                else:
+                    logger.info("No research papers found via Arxiv fallback.")
         
-        except Exception as e:
-            logger.error(f"Arxiv search failed: {str(e)}")
-            papers = []
+            except Exception as e:
+                logger.error(f"Arxiv search failed: {str(e)}")
+        
+        # --- CRITICAL FIX: Define 'papers' variable for downstream code ---
+        papers = research_data["papers"]
+        # -----------------------------------------------------------------
         
         # Step 4: Generate research plan using LLM
         logger.info("Generating research plan...")
@@ -211,6 +343,10 @@ Create a concise 4-step research plan for this ML project. Each step should be O
         
         # Update research plan
         state["research_plan"] = research_steps
+        
+        # Save research_data to state
+        state["research_data"] = research_data
+        logger.info(f"📊 Captured research data: {len(research_data['queries'])} queries, {len(research_data['papers'])} papers")
         
         # Add message to conversation
         research_summary = f"""✅ Research Complete

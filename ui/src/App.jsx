@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
+import ResearchFeed from './ResearchFeed'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -166,6 +167,7 @@ function App() {
     const [showApprovalModal, setShowApprovalModal] = useState(false)
     const [showFinalModal, setShowFinalModal] = useState(false)
     const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
+    const [activeTab, setActiveTab] = useState('research')  // Research tab active by default
     const [agentSteps, setAgentSteps] = useState([
         { name: 'Research Agent', status: 'pending', description: 'Pending...' },
         { name: 'Critic Agent', status: 'pending', description: 'Pending...' },
@@ -558,27 +560,71 @@ function App() {
                                 </div>
                             </div>
 
-                            {/* RIGHT COLUMN */}
+                            {/* RIGHT COLUMN - Tabs */}
                             <div className="w-80 flex flex-col shrink-0">
+                                {/* Tab Navigation */}
                                 <div className="flex border-b border-glass-border">
-                                    <button className="flex-1 py-3 text-sm font-medium text-white border-b-2 border-primary bg-surface-dark/50">Code</button>
-                                    <button className="flex-1 py-3 text-sm font-medium text-gray-400 hover:text-white">Visuals</button>
-                                    <button className="flex-1 py-3 text-sm font-medium text-gray-400 hover:text-white">Summary</button>
+                                    <button
+                                        onClick={() => setActiveTab('research')}
+                                        className={`flex-1 py-3 text-sm font-medium transition-all ${activeTab === 'research'
+                                            ? 'text-white border-b-2 border-accent-cyan bg-surface-dark/50'
+                                            : 'text-gray-400 hover:text-white'
+                                            }`}>
+                                        <span className="flex items-center justify-center gap-1">
+                                            <span className="material-symbols-outlined text-sm">science</span>
+                                            Research
+                                        </span>
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab('code')}
+                                        className={`flex-1 py-3 text-sm font-medium transition-all ${activeTab === 'code'
+                                            ? 'text-white border-b-2 border-primary bg-surface-dark/50'
+                                            : 'text-gray-400 hover:text-white'
+                                            }`}>
+                                        Code
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab('visuals')}
+                                        className={`flex-1 py-3 text-sm font-medium transition-all ${activeTab === 'visuals'
+                                            ? 'text-white border-b-2 border-primary bg-surface-dark/50'
+                                            : 'text-gray-400 hover:text-white'
+                                            }`}>
+                                        Visuals
+                                    </button>
                                 </div>
+
+                                {/* Tab Content */}
                                 <div className="flex-1 bg-[#0d0d12] rounded-b-xl overflow-hidden flex flex-col">
-                                    <div className="p-3 flex items-center justify-between border-b border-glass-border bg-[#15151e]">
-                                        <div className="flex items-center gap-2">
-                                            <span className="material-symbols-outlined text-yellow-400 text-sm">description</span>
-                                            <span className="text-xs font-mono text-gray-300">generated_code.py</span>
+                                    {activeTab === 'research' && (
+                                        <ResearchFeed data={status?.research_data || {}} />
+                                    )}
+
+                                    {activeTab === 'code' && (
+                                        <>
+                                            <div className="p-3 flex items-center justify-between border-b border-glass-border bg-[#15151e]">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="material-symbols-outlined text-yellow-400 text-sm">description</span>
+                                                    <span className="text-xs font-mono text-gray-300">generated_code.py</span>
+                                                </div>
+                                                <button className="text-primary text-[10px] font-bold flex items-center gap-1">
+                                                    <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                                                    COPY
+                                                </button>
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto p-3 font-mono text-xs text-gray-400">
+                                                <div className="opacity-50"># Code appears here...</div>
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {activeTab === 'visuals' && (
+                                        <div className="flex-1 flex items-center justify-center">
+                                            <div className="text-center">
+                                                <span className="material-symbols-outlined text-6xl text-gray-700 mb-4">insights</span>
+                                                <p className="text-gray-500">Visuals coming soon</p>
+                                            </div>
                                         </div>
-                                        <button className="text-primary text-[10px] font-bold flex items-center gap-1">
-                                            <span className="material-symbols-outlined text-[14px]">content_copy</span>
-                                            COPY
-                                        </button>
-                                    </div>
-                                    <div className="flex-1 overflow-y-auto p-3 font-mono text-xs text-gray-400">
-                                        <div className="opacity-50"># Code appears here...</div>
-                                    </div>
+                                    )}
                                 </div>
                             </div>
 

@@ -476,7 +476,14 @@ async def start_workflow(request: WorkflowRequest, background_tasks: BackgroundT
             "review_feedback": [],
             "human_approval": ApprovalStatus.PENDING,
             "next_step": "research_agent",
-            "rejected_urls": []  # Track rejected dataset URLs
+            "rejected_urls": [],  # Track rejected dataset URLs
+            "research_data": {  # Research Assistant findings
+                "queries": [],
+                "dataset_name": "",
+                "dataset_url": "",
+                "source_type": "",
+                "papers": []
+            }
         }
         
         # Save to memory
@@ -526,7 +533,14 @@ async def get_workflow_status(workflow_id: str):
         "workflow_id": workflow_id,
         "status": status,
         "current_step": next_step,
-        "user_goal": state.get("user_goal", "")
+        "user_goal": state.get("user_goal", ""),
+        "research_data": state.get("research_data", {
+            "queries": [],
+            "dataset_name": "",
+            "dataset_url": "",
+            "source_type": "",
+            "papers": []
+        })
     }
 
 

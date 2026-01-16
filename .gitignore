@@ -154,3 +154,60 @@ data/raw/
 data/processed/
 models/
 playwright/.cache/
+
+# Node.js / Frontend
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.npm
+.eslintcache
+.next/
+out/
+.nuxt/
+dist/
+.cache/
+
+# Environment variables & Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# API Keys (redundant but explicit)
+*_API_KEY*
+*_SECRET*
+*.credentials
+
+# Browser automation data
+browser_data/
+chrome_data/
+playwright-state/
+
+# Generated files
+generated_code.py
+*.generated.*
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
