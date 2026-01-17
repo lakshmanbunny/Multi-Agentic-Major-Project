@@ -16,7 +16,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama  # Local LLM for cost savings
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_community.utilities import ArxivAPIWrapper
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -113,12 +113,12 @@ def research_node(state: AgentState) -> AgentState:
     }
     
     try:
-        # Initialize LLM
-        # Using 1.5-flash-001 as it is the current stable version
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+        # Initialize Local LLM - Llama3 via Ollama for cost savings with JSON formatting
+        logger.info("💻 Using local Llama3 model (JSON mode) for query generation and planning...")
+        llm = ChatOllama(
+            model="llama3",
             temperature=0,
-            google_api_key=os.getenv("GOOGLE_API_KEY")
+            format="json"  # Force JSON output for reliable parsing
         )
         
         # Step 1: Generate search queries using LLM - PRIORITIZE KAGGLE
@@ -131,29 +131,41 @@ def research_node(state: AgentState) -> AgentState:
             rejection_context = f"\n\nIMPORTANT: Avoid these previously rejected URLs:\n" + "\n".join([f"- {url}" for url in rejected_urls])
             logger.info(f"Excluding {len(rejected_urls)} previously rejected URL(s)")
         
-        query_prompt = f"""Given this machine learning goal: "{user_goal}"
+        query_prompt = f"""You are a Research Assistant. Given the machine learning goal: "{user_goal}"
 {rejection_context}
 
-Generate TWO specific search queries that PRIORITIZE KAGGLE DATASETS:
-1. A query to find Kaggle datasets (add 'site:kaggle.com/datasets' to ensure Kaggle results)
-2. A query to find ML algorithms/papers
+Generate TWO specific search queries. Return ONLY a JSON object with this EXACT structure:
+{{
+    "dataset_query": "kaggle dataset <relevant keywords> site:kaggle.com/datasets",
+    "algorithm_query": "<query to find ML algorithms/research papers>"
+}}
 
-Format your response as:
-DATASET_QUERY: kaggle dataset <relevant keywords here> site:kaggle.com/datasets
-ALGORITHM_QUERY: <your algorithm query>"""
+Rules:
+1. dataset_query MUST include 'kaggle dataset' and 'site:kaggle.com/datasets'
+2. Be specific and relevant to the goal
+3. Return ONLY valid JSON, nothing else"""
         
         query_response = llm.invoke(query_prompt)
-        query_text = query_response.content
+        query_text = query_response.content.strip()
         
-        # Parse queries
+        # Parse JSON response with robust error handling
         dataset_query = ""
         algorithm_query = ""
         
-        for line in query_text.split('\n'):
-            if line.startswith("DATASET_QUERY:"):
-                dataset_query = line.replace("DATASET_QUERY:", "").strip()
-            elif line.startswith("ALGORITHM_QUERY:"):
-                algorithm_query = line.replace("ALGORITHM_QUERY:", "").strip()
+        try:
+            queries = json.loads(query_text)
+            dataset_query = queries.get("dataset_query", "")
+            algorithm_query = queries.get("algorithm_query", "")
+            logger.info(f"✅ Parsed queries successfully from JSON")
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Failed to parse JSON from LLM: {e}")
+            logger.error(f"Raw response: {query_text[:200]}...")
+            # Fallback: try to extract from text
+            for line in query_text.split('\n'):
+                if 'dataset' in line.lower() and 'kaggle' in line.lower():
+                    dataset_query = line.strip()
+                elif 'algorithm' in line.lower() or 'machine learning' in line.lower():
+                    algorithm_query = line.strip()
         
         # Capture queries
         if dataset_query:

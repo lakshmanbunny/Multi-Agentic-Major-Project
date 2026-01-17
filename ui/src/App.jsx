@@ -156,6 +156,92 @@ function FinalSatisfactionModal({ isOpen, onComplete, onRetry, isSubmitting }) {
     )
 }
 
+// Schema Verification Modal Component - HITL Checkpoint for Schema
+function SchemaVerificationModal({ isOpen, onApprove, onReject, schema, isSubmitting }) {
+    if (!isOpen) return null
+
+    const hasValidSchema = schema && schema.length > 20 && !schema.includes("not available")
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-xl"></div>
+            <div className="relative w-full max-w-[600px]">
+                <div className="absolute -inset-1 bg-gradient-to-r from-yellow-500 via-amber-500 to-yellow-500 rounded-xl opacity-30 blur-2xl animate-pulse"></div>
+                <div className="relative flex flex-col overflow-hidden rounded-xl bg-surface-dark shadow-2xl ring-1 ring-yellow-500/30">
+                    <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-yellow-500 via-amber-500 to-yellow-500"></div>
+                    <div className="relative flex flex-col p-8 z-20">
+                        <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-yellow-500/10 ring-1 ring-yellow-500/30 animate-pulse relative">
+                            <span className="text-[48px]">🧐</span>
+                        </div>
+                        <div className="text-center space-y-2 mb-6">
+                            <h2 className="text-2xl font-mono font-bold text-white">Schema Verification Required</h2>
+                            <div className="inline-flex items-center gap-2 rounded-md bg-white/5 px-3 py-1.5 ring-1 ring-yellow-500/30">
+                                <span className="h-2 w-2 rounded-full bg-yellow-500 animate-pulse"></span>
+                                <span className="font-mono text-xs uppercase text-yellow-500">Checkpoint: Pre-ML</span>
+                            </div>
+                        </div>
+
+                        <p className="text-gray-300 text-center mb-4">
+                            The Data Engineer has extracted the columns below.<br />
+                            <span className="text-white font-medium">Verify them before running the ML Agent.</span>
+                        </p>
+
+                        {/* Schema Display */}
+                        <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-xs overflow-x-auto mb-6 border border-gray-700 max-h-48 overflow-y-auto">
+                            <div className="flex justify-between text-gray-500 mb-2 border-b border-gray-700 pb-1">
+                                <span className="font-bold text-yellow-500">DETECTED COLUMNS</span>
+                                <span className="text-[10px] uppercase tracking-wider">Source: Memory Introspection</span>
+                            </div>
+                            <div className="whitespace-pre-wrap text-sm">
+                                {hasValidSchema ? (
+                                    <span className="text-green-400">{schema}</span>
+                                ) : (
+                                    <span className="text-red-400">⚠️ No schema detected. (This indicates a failure - you should likely Reject)</span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex gap-4 justify-center">
+                            <button
+                                onClick={onReject}
+                                disabled={isSubmitting}
+                                className="flex-1 rounded-lg bg-[#1a1a2e] px-6 py-4 ring-1 ring-[#ff006e]/30 hover:shadow-[0_0_20px_rgba(255,0,110,0.3)] transition-all hover:-translate-y-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <div className="flex items-center justify-center gap-3">
+                                    <span className="material-symbols-outlined text-[#ff006e]">close</span>
+                                    <span className="font-bold text-white">❌ Reject & Stop</span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">Save tokens</p>
+                            </button>
+                            <button
+                                onClick={onApprove}
+                                disabled={isSubmitting}
+                                className="flex-1 rounded-lg bg-[#1a1a2e] px-6 py-4 ring-1 ring-accent-green/30 hover:shadow-[0_0_20px_rgba(0,255,136,0.3)] transition-all hover:-translate-y-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <div className="flex items-center justify-center gap-3">
+                                    {isSubmitting && <span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>}
+                                    <span className="material-symbols-outlined text-accent-green">check</span>
+                                    <span className="font-bold text-white">✅ Approve Schema</span>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">Continue to ML</p>
+                            </button>
+                        </div>
+
+                        <div className="mt-6 flex justify-between items-center border-t border-white/5 pt-4">
+                            <div className="flex items-center gap-2 text-xs text-gray-500 font-mono">
+                                <span className="material-symbols-outlined text-[14px]">schema</span>
+                                <span>Schema Checkpoint</span>
+                            </div>
+                            <div className="text-xs text-gray-600 font-mono">HITL_v2.4.1</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )
+}
+
 function App() {
     const [workflowId, setWorkflowId] = useState(null)
     const [userGoal, setUserGoal] = useState('')
@@ -166,6 +252,7 @@ function App() {
     const [history, setHistory] = useState([])
     const [showApprovalModal, setShowApprovalModal] = useState(false)
     const [showFinalModal, setShowFinalModal] = useState(false)
+    const [showSchemaModal, setShowSchemaModal] = useState(false)
     const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
     const [activeTab, setActiveTab] = useState('research')  // Research tab active by default
     const [agentSteps, setAgentSteps] = useState([
@@ -199,6 +286,13 @@ function App() {
                 if (res.data.status === 'waiting_approval') {
                     console.log('HITL MODAL TRIGGERED!')
                     setShowApprovalModal(true)
+                }
+
+                // Show Schema Verification modal
+                if (res.data.status === 'waiting_schema_approval') {
+                    console.log('SCHEMA VERIFICATION MODAL TRIGGERED!')
+                    setShowSchemaModal(true)
+                    setIsRunning(false)  // Pause polling while waiting for user
                 }
 
                 // Show Final Satisfaction modal
@@ -235,6 +329,8 @@ function App() {
             'critic_agent': 1,
             'waiting_human_approval': 1,
             'data_engineering_agent': 2,
+            'intermediate_schema_capture': 2,
+            'waiting_schema_approval': 2,  // Schema checkpoint after Data Engineer
             'ml_engineering_agent': 3,
             'browser_execution': 4,
             'completed': 5,
@@ -243,7 +339,7 @@ function App() {
         const stepDescriptions = {
             0: { active: 'Searching datasets & methods...', completed: 'Found dataset & research plan' },
             1: { active: 'Validating dataset URL...', waiting: 'Awaiting your approval', completed: 'Dataset validated' },
-            2: { active: 'Generating EDA code...', completed: 'EDA code generated' },
+            2: { active: 'Generating EDA code...', waiting: 'Schema detected - awaiting verification', completed: 'EDA code generated' },
             3: { active: 'Training ML model...', completed: 'Model trained' },
             4: { active: 'Executing in Colab browser...', completed: 'Execution complete' },
         }
@@ -259,7 +355,7 @@ function App() {
                 newStatus = 'completed'
                 description = stepDescriptions[idx]?.completed || 'Done'
             } else if (idx === currentIdx) {
-                if (workflowStatus === 'waiting_approval') {
+                if (workflowStatus === 'waiting_approval' || workflowStatus === 'waiting_schema_approval') {
                     newStatus = 'waiting'
                     description = stepDescriptions[idx]?.waiting || 'Waiting...'
                 } else {
@@ -349,6 +445,34 @@ function App() {
             setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ❌ Dataset REJECTED - retrying research`])
         } catch (error) {
             setLogs(prev => [...prev, `[ERROR] Rejection failed: ${error.message}`])
+        }
+    }
+
+    // SCHEMA CHECKPOINT: Approve Schema -> Continue to ML
+    const handleSchemaApprove = async () => {
+        setShowSchemaModal(false)
+        setIsSubmittingFeedback(true)
+        try {
+            await axios.post(`${API_BASE}/workflow/${workflowId}/schema/approve`)
+            setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ✅ Schema APPROVED - starting ML Engineer`])
+            setIsRunning(true)  // Resume polling
+        } catch (error) {
+            setLogs(prev => [...prev, `[ERROR] Schema approval failed: ${error.message}`])
+        } finally {
+            setIsSubmittingFeedback(false)
+        }
+    }
+
+    // SCHEMA CHECKPOINT: Reject Schema -> Abort Workflow
+    const handleSchemaReject = async () => {
+        if (!confirm("Are you sure? This will abort the workflow to save tokens.")) return
+        setShowSchemaModal(false)
+        try {
+            await axios.post(`${API_BASE}/workflow/${workflowId}/schema/reject`)
+            setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ⛔ Workflow ABORTED at Schema Checkpoint`])
+            setIsRunning(false)
+        } catch (error) {
+            setLogs(prev => [...prev, `[ERROR] Schema rejection failed: ${error.message}`])
         }
     }
 
@@ -646,6 +770,15 @@ function App() {
                 isOpen={showFinalModal}
                 onComplete={handleFinalComplete}
                 onRetry={handleFinalRetry}
+                isSubmitting={isSubmittingFeedback}
+            />
+
+            {/* Schema Verification Modal - triggers after Data Engineer */}
+            <SchemaVerificationModal
+                isOpen={showSchemaModal}
+                onApprove={handleSchemaApprove}
+                onReject={handleSchemaReject}
+                schema={status?.schema || ''}
                 isSubmitting={isSubmittingFeedback}
             />
         </>

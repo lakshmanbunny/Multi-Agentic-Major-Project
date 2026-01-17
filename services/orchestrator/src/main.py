@@ -75,6 +75,41 @@ class FeedbackRequest(BaseModel):
     satisfied: bool
     feedback: str = ""
 
+class SchemaCallbackPayload(BaseModel):
+    """Payload for direct schema callback from Python execution"""
+    columns: List[str]
+
+# --- SCHEMA EXTRACTION HELPER ---
+def extract_schema_from_logs(logs: str) -> str:
+    """
+    Extract dataset schema information from execution logs.
+    Looks for df.info(), df.columns, df.dtypes output.
+    """
+    import re
+    
+    schema_parts = []
+    
+    # Look for DataFrame info() output
+    info_pattern = r"<class 'pandas.core.frame.DataFrame'>[\s\S]*?(?=\n\n|\Z)"
+    info_matches = re.findall(info_pattern, logs)
+    if info_matches:
+        schema_parts.append("DataFrame Info:\\n" + info_matches[0])
+    
+    # Look for columns output
+    columns_pattern = r"Index\(\[.*?\]\)|Columns: \[.*?\]"
+    columns_matches = re.findall(columns_pattern, logs, re.DOTALL)
+    if columns_matches:
+        schema_parts.append("\\nColumns: " + columns_matches[0])
+    
+    # Look for dtypes output
+    dtypes_pattern = r"(\w+)\s+(int64|float64|object|bool|datetime64)"
+    dtypes_matches = re.findall(dtypes_pattern, logs)
+    if dtypes_matches:
+        dtypes_str = "\\n".join([f"{col}: {dtype}" for col, dtype in dtypes_matches[:20]])  # Limit to 20
+        schema_parts.append("\\nData Types:\\n" + dtypes_str)
+    
+    return "\\n".join(schema_parts) if schema_parts else ""
+
 # --- BACKGROUND TASK (Real Workflow Execution) ---
 async def run_workflow_simulation(workflow_id: str):
     """
@@ -170,6 +205,47 @@ async def run_workflow_simulation(workflow_id: str):
     except Exception as e:
         logger.error(f"Data Engineering Agent failed: {e}", extra={"workflow_id": workflow_id})
         return
+    
+    # 2.5. INTERMEDIATE EXECUTION - Run EDA to capture schema
+    logger.info("🔬 Running EDA code to capture dataset schema...", extra={"workflow_id": workflow_id})
+    state["next_step"] = "intermediate_eda_execution"
+    workflows[workflow_id] = state
+    
+    try:
+        eda_code = state["code_context"].get("eda_code", "")
+        
+        # Execute EDA code in browser
+        with httpx.Client(timeout=120.0) as client:
+            response = client.post(
+                "http://localhost:8001/execute",
+json={"code": eda_code}
+            )
+        
+        if response.status_code == 200:
+            result = response.json()
+            eda_logs = result.get("logs", "")
+            
+            # Parse schema from logs (look for df.info(), df.columns, df.dtypes output)
+            schema = extract_schema_from_logs(eda_logs)
+            
+            if schema:
+                state["dataset_info"]["schema"] = schema
+                logger.info(f"✅ Schema captured: {len(schema)} characters", extra={"workflow_id": workflow_id})
+                logger.info(f"Schema preview: {schema[:200]}...", extra={"workflow_id": workflow_id})
+            else:
+                logger.warning("⚠️ Could not extract schema from EDA logs", extra={"workflow_id": workflow_id})
+                state["dataset_info"]["schema"] = "Schema not available"
+            
+            workflows[workflow_id] = state
+        else:
+            logger.warning(f"Intermediate EDA execution failed: HTTP {response.status_code}", extra={"workflow_id": workflow_id})
+            state["dataset_info"]["schema"] = "Schema not available"
+            workflows[workflow_id] = state
+            
+    except Exception as e:
+        logger.error(f"Intermediate execution failed: {e}", extra={"workflow_id": workflow_id})
+        state["dataset_info"]["schema"] = "Schema not available"
+        workflows[workflow_id] = state
     
     # 3. Execute ML Engineering Agent
     logger.info("ML Engineering Agent: Generating training code...", extra={"workflow_id": workflow_id})
@@ -292,7 +368,144 @@ def continue_workflow_after_approval(workflow_id: str):
         workflows[workflow_id] = state
         return
     
-    # 3. Execute ML Engineering Agent
+    # 2.5. INTERMEDIATE EXECUTION - Capture Schema
+    logger.info("⚡ INTERMEDIATE EXECUTION: Capturing dataset schema...", extra={"workflow_id": workflow_id})
+    state["next_step"] = "intermediate_schema_capture"
+    workflows[workflow_id] = state
+    
+    try:
+        eda_code = state["code_context"].get("eda_code", "")
+        
+        if eda_code:
+            # PUBLIC MAILBOX STRATEGY (ntfy.sh)
+            # Posts schema to ntfy.sh which the orchestrator can poll from
+            introspection_code = f"""
+import pandas as pd
+import requests
+import json
+import sys
+
+# 1. Find the DataFrame
+search_space = {{**globals(), **locals()}}
+target_df = None
+for k, v in list(search_space.items()):
+    if isinstance(v, pd.DataFrame) and not k.startswith('_'):
+        target_df = v
+        break
+
+if target_df is not None:
+    columns = list(target_df.columns)
+    print(f"DATA_SCHEMA_LOCKED:{{columns}}", flush=True)
+    
+    # 2. POST to ntfy.sh (Reliable Public Mailbox)
+    try:
+        # Use a unique channel name based on workflow_id
+        ntfy_url = "https://ntfy.sh/{workflow_id}"
+        print(f"📨 Posting to ntfy.sh: {{ntfy_url}}...", flush=True)
+        
+        # ntfy accepts raw text/JSON body. We send our JSON string.
+        response = requests.post(
+            ntfy_url,
+            data=json.dumps({{"schema": columns}}),
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            print("✅ Schema successfully posted to ntfy!", flush=True)
+        else:
+            print(f"❌ ntfy Failed: {{response.status_code}}", flush=True)
+            
+    except Exception as e:
+        print(f"❌ Network Error: {{e}}", flush=True)
+else:
+    print("DATA_SCHEMA_ERROR: No DataFrame found", flush=True)
+"""
+            schema_extraction_code = eda_code + "\n" + introspection_code
+            
+            with httpx.Client(timeout=180.0) as client:
+                response = client.post(
+                    "http://localhost:8001/execute",
+                    json={"code": schema_extraction_code}
+                )
+                
+                if response.status_code == 200:
+                    logs = response.json().get("logs", "")
+                    
+                    # The schema is now set via callback, but we still check logs as backup
+                    if "DATA_SCHEMA_LOCKED:" in logs:
+                        schema_str = logs.split("DATA_SCHEMA_LOCKED:")[1].split("\n")[0]
+                        # Only set if callback didn't already set it
+                        if "schema" not in state["dataset_info"] or not state["dataset_info"]["schema"]:
+                            state["dataset_info"]["schema"] = schema_str
+                            logger.info(f"✅ Schema Captured via logs (backup): {schema_str}", extra={"workflow_id": workflow_id})
+                    else:
+                        logger.warning("⚠️ Schema tag not found in logs", extra={"workflow_id": workflow_id})
+                        # Don't overwrite if callback succeeded
+                        if "schema" not in state["dataset_info"] or not state["dataset_info"]["schema"]:
+                            state["dataset_info"]["schema"] = "Schema not available"
+                else:
+                    logger.warning(f"Schema capture failed: HTTP {response.status_code}", extra={"workflow_id": workflow_id})
+                    if "schema" not in state["dataset_info"] or not state["dataset_info"]["schema"]:
+                        state["dataset_info"]["schema"] = "Schema not available"
+        else:
+            logger.warning("⚠️ No EDA code available for schema extraction", extra={"workflow_id": workflow_id})
+            state["dataset_info"]["schema"] = "Schema not available"
+            
+        workflows[workflow_id] = state
+        
+    except Exception as e:
+        logger.error(f"Intermediate schema capture failed: {e}", extra={"workflow_id": workflow_id})
+        state["dataset_info"]["schema"] = "Schema not available"
+        workflows[workflow_id] = state
+    
+    # --- FALLBACK: Check ntfy.sh if logs failed ---
+    if "schema" not in state["dataset_info"] or not state["dataset_info"]["schema"] or state["dataset_info"]["schema"] == "Schema not available":
+        try:
+            logger.info(f"📭 Checking ntfy.sh mailbox: {workflow_id}", extra={"workflow_id": workflow_id})
+            # Poll for the latest JSON message
+            import requests
+            import json
+            response = requests.get(f"https://ntfy.sh/{workflow_id}/json?poll=1", timeout=5)
+            
+            if response.status_code == 200:
+                # ntfy streams JSON lines. We parse them to find our schema.
+                lines = response.text.strip().split('\n')
+                for line in reversed(lines):
+                    try:
+                        msg = json.loads(line)
+                        if "message" in msg:
+                            # The message body is our JSON string
+                            payload = json.loads(msg["message"])
+                            if "schema" in payload:
+                                schema_data = payload["schema"]
+                                logger.info(f"✅ Schema retrieved from ntfy: {schema_data}", extra={"workflow_id": workflow_id})
+                                state["dataset_info"]["schema"] = str(schema_data)
+                                workflows[workflow_id] = state  # Save state
+                                break
+                    except:
+                        continue
+        except Exception as e:
+            logger.error(f"❌ Failed to check ntfy: {e}", extra={"workflow_id": workflow_id})
+    # -----------------------------------------------
+    
+    # 🛑 HITL CHECKPOINT: Pause for Schema Verification
+    logger.info("🛑 Pausing for Schema Verification...", extra={"workflow_id": workflow_id})
+    state["next_step"] = "waiting_schema_approval"
+    workflows[workflow_id] = state
+    return  # Stop here - user will approve/reject via API
+
+
+def continue_after_schema_validation(workflow_id: str):
+    """Part 2: ML Engineering & Final Execution - Called after schema approval"""
+    logger.info("🚀 Resuming workflow after Schema Verification...", extra={"workflow_id": workflow_id})
+    
+    if workflow_id not in workflows:
+        logger.error("Workflow not found for schema continuation", extra={"workflow_id": workflow_id})
+        return
+    
+    state = workflows[workflow_id]
+    
+    # 3. Execute ML Engineering Agent (NOW WITH SCHEMA!)
     logger.info("ML Engineering Agent: Generating training code...", extra={"workflow_id": workflow_id})
     state["next_step"] = "ml_engineering_agent"
     workflows[workflow_id] = state
@@ -470,7 +683,13 @@ async def start_workflow(request: WorkflowRequest, background_tasks: BackgroundT
         initial_state: AgentState = {
             "messages": [],
             "user_goal": request.user_goal,
-            "dataset_info": {"url": request.dataset_url or "", "file_path": "", "is_public": True, "description": ""},
+            "dataset_info": {
+                "url": request.dataset_url or "", 
+                "file_path": "", 
+                "is_public": True, 
+                "description": "",
+                "schema": ""  # Will be populated by intermediate execution
+            },
             "research_plan": [],
             "code_context": {"eda_code": "", "model_code": "", "file_name": ""},
             "review_feedback": [],
@@ -518,12 +737,16 @@ async def get_workflow_status(workflow_id: str):
     
     if next_step == "waiting_human_approval":
         status = "waiting_approval"
+    elif next_step == "waiting_schema_approval":
+        status = "waiting_schema_approval"  # NEW: Schema checkpoint
     elif next_step == "waiting_final_approval":
         status = "waiting_final_approval"
     elif next_step == "completed":
         status = "completed"
     elif next_step == "failed":
         status = "failed"
+    elif next_step == "aborted":
+        status = "aborted"  # NEW: Aborted state
     elif approval == ApprovalStatus.REJECTED:
         status = "failed"
     else:
@@ -534,6 +757,7 @@ async def get_workflow_status(workflow_id: str):
         "status": status,
         "current_step": next_step,
         "user_goal": state.get("user_goal", ""),
+        "schema": state.get("dataset_info", {}).get("schema", ""),  # NEW: Include schema
         "research_data": state.get("research_data", {
             "queries": [],
             "dataset_name": "",
@@ -564,6 +788,61 @@ async def approve_workflow(workflow_id: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(continue_workflow_after_approval, workflow_id)
     
     return {"status": "approved", "message": "Workflow approved, continuing to Data Engineering"}
+
+
+# --- SCHEMA CHECKPOINT ENDPOINTS ---
+@app.post("/workflow/{workflow_id}/schema/approve")
+async def approve_schema(workflow_id: str, background_tasks: BackgroundTasks):
+    """Resume workflow -> ML Engineer after schema is verified"""
+    if workflow_id not in workflows:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    
+    state = workflows[workflow_id]
+    state["next_step"] = "ml_engineering_agent"
+    workflows[workflow_id] = state
+    
+    logger.info("✅ Schema accepted. Starting ML Phase...", extra={"workflow_id": workflow_id})
+    background_tasks.add_task(continue_after_schema_validation, workflow_id)
+    return {"status": "approved", "message": "Schema accepted. Starting ML Engineer..."}
+
+
+@app.post("/workflow/{workflow_id}/schema/reject")
+async def reject_schema(workflow_id: str):
+    """Abort workflow -> Save Tokens when schema verification fails"""
+    if workflow_id not in workflows:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    
+    state = workflows[workflow_id]
+    state["next_step"] = "aborted"
+    state["messages"].append({
+        "role": "system", 
+        "content": "❌ Workflow aborted by user due to Schema Verification failure."
+    })
+    workflows[workflow_id] = state
+    
+    logger.warning("⛔ Workflow aborted by user at Schema Checkpoint", extra={"workflow_id": workflow_id})
+    return {"status": "aborted", "message": "Workflow aborted. No tokens spent on ML Agent."}
+
+
+@app.post("/workflow/{workflow_id}/schema/callback")
+async def receive_schema_callback(workflow_id: str, payload: SchemaCallbackPayload):
+    """
+    Direct callback endpoint for the Data Engineer to send the schema.
+    Called by Python code running inside Docker container.
+    """
+    if workflow_id not in workflows:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    
+    logger.info(f"📨 Callback received! Schema: {payload.columns}", extra={"workflow_id": workflow_id})
+    
+    # 1. Update State Directly
+    state = workflows[workflow_id]
+    state["dataset_info"]["schema"] = str(payload.columns)
+    
+    # 2. Persist State
+    workflows[workflow_id] = state
+    
+    return {"status": "success", "message": "Schema received"}
 
 
 @app.post("/workflow/{workflow_id}/feedback")

@@ -12,6 +12,7 @@ class DatasetInfo(TypedDict):
     file_path: str
     is_public: bool
     description: str
+    schema: str  # Dataset schema captured from EDA execution
 
 class CodeContext(TypedDict):
     eda_code: str

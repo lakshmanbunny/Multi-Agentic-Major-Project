@@ -42,10 +42,13 @@ def ml_engineering_node(state: AgentState) -> AgentState:
     dataset_url = state.get("dataset_info", {}).get("url", "")
     research_plan = state.get("research_plan", [])
     data_preview = state.get("dataset_info", {}).get("data_preview", "No preview available")
+    schema = state.get("dataset_info", {}).get("schema", "")  # NEW: Get captured schema
+    research_data = state.get("research_data", {})  # NEW: Get research findings
     
     logger.info(f"🤖 ML Engineering Agent started for: {user_goal}")
     logger.info(f"Research plan steps: {len(research_plan)}")
     logger.info(f"Data preview available: {len(data_preview)} chars")
+    logger.info(f"Schema captured: {'YES' if schema else 'NO'} ({len(schema)} chars)")
     
     try:
         # Initialize LLM
@@ -60,6 +63,29 @@ def ml_engineering_node(state: AgentState) -> AgentState:
         
         research_context = "\\n".join([f"- {step}" for step in research_plan])
         
+        # NEW: Build schema section
+        schema_section = ""
+        if schema:
+            schema_section = f"""
+**📊 ACTUAL DATASET SCHEMA (from EDA execution):**
+```
+{schema}
+```
+✅ Use this REAL schema to write accurate code. These are the ACTUAL columns and types!
+"""
+        else:
+            schema_section = "**⚠️ Schema not available - infer from preview**"
+        
+        # NEW: Build research papers section
+        papers_context = ""
+        if research_data.get("papers"):
+            papers_summary = "\\n".join([f"- {p.get('title', 'N/A')}: {p.get('summary', '')[:100]}..." 
+                                        for p in research_data["papers"][:3]])
+            papers_context = f"""
+**📚 Research Papers Context:**
+{papers_summary}
+"""
+        
         ml_prompt = f"""You are an Expert ML Engineer. Write complete Python code for model training.
 
 **User Goal:** {user_goal}
@@ -67,6 +93,10 @@ def ml_engineering_node(state: AgentState) -> AgentState:
 
 **Research Plan:**
 {research_context}
+
+{schema_section}
+
+{papers_context}
 
 **DATASET PREVIEW (First 5 Rows):**
 ```

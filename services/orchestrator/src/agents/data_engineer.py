@@ -95,24 +95,45 @@ def data_engineering_node(state: AgentState) -> AgentState:
 {data_preview}
 ```
 
-**CRITICAL REQUIREMENTS:**
-1. Import necessary libraries (pandas, matplotlib, seaborn, numpy)
-2. Load the dataset using the EXACT loading instructions above
-3. Use ONLY the column names that appear in the dataset preview above
-4. DO NOT invent or assume column names like 'id', 'name', etc. that are not in the preview
-5. Handle missing values (impute numeric with mean, categorical with mode)
-6. Print dataset info, shape, and summary statistics
-7. Create exactly 2 visualizations:
-   - Histogram of numerical features
-   - Correlation matrix heatmap
-8. Save plots as PNG files
+**🚨🚨🚨 ABSOLUTELY CRITICAL - READ THIS FIRST 🚨🚨🚨**
 
-**OUTPUT RULES:**
-- Output ONLY valid Python code
-- No markdown formatting (no ```python or ```)
-- No explanatory text or comments
-- Follow the loading instructions EXACTLY
-- Use the exact column names from the preview
+❌ WRONG - DO NOT DO THIS:
+```python
+def main():
+    df = pd.read_csv(...)  # WRONG! df will be garbage collected!
+    
+if __name__ == "__main__":
+    main()
+```
+
+✅ CORRECT - DO THIS INSTEAD:
+```python
+import pandas as pd
+df = pd.read_csv(...)  # CORRECT! df persists at top level!
+print(df.head())
+```
+
+**MANDATORY RULES:**
+1. **ZERO FUNCTIONS** - Do NOT define ANY functions. Not `def main():`, not `def load_data():`, NOTHING.
+2. **TOP-LEVEL SCRIPT** - Every single line of code must be at the global/top level.
+3. **VARIABLE df** - The DataFrame MUST be stored in a variable named exactly `df` at the TOP LEVEL.
+4. **NO if __name__** - Do NOT use `if __name__ == "__main__":` anywhere.
+5. **NO HARDCODED COLUMNS** - Never assume specific column names exist. Use ONLY columns from the preview above.
+   - ❌ WRONG: `df['Glucose'].fillna(0)` (Crashes if column doesn't exist!)
+   - ✅ CORRECT: Use generic iteration: `for col in df.select_dtypes(include='number').columns: df[col].fillna(df[col].mean(), inplace=True)`
+
+**REQUIRED STEPS (all at TOP LEVEL):**
+1. Import libraries (pandas, matplotlib, seaborn, numpy, kagglehub)
+2. Load dataset into `df` using the loading instructions above
+3. Print df.shape, df.info(), df.describe()
+4. Handle missing values
+5. Create 2 visualizations and save as PNG
+
+**OUTPUT FORMAT:**
+- Output ONLY executable Python code
+- No markdown fences
+- No explanations
+- FLAT SCRIPT ONLY - NO FUNCTIONS!
 
 Generate the code now:"""
         
